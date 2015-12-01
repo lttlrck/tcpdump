@@ -1,3 +1,7 @@
+Added flag -P to make ring buffer functionality persistent so that it continues recording where it left off after restart.
+
+There is a new libpcap API dependency on pcap_dump_open_append.
+
 # tcpdump
 
 [![Build
