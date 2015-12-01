@@ -89,8 +89,10 @@ The Regents of the University of California.  All rights reserved.\n";
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <pwd.h>
 #include <grp.h>
+#include <dirent.h>
 #endif /* _WIN32 */
 
 /* capabilities convenience library */
@@ -164,6 +166,7 @@ static void print_packet(u_char *, const struct pcap_pkthdr *, const u_char *);
 static void dump_packet_and_trunc(u_char *, const struct pcap_pkthdr *, const u_char *);
 static void dump_packet(u_char *, const struct pcap_pkthdr *, const u_char *);
 static void droproot(const char *, const char *);
+static int get_last_file(const char *);
 
 #ifdef SIGNAL_REQ_INFO
 RETSIGTYPE requestinfo(int);
@@ -394,7 +397,7 @@ show_devices_and_exit (void)
 #define Q_FLAG
 #endif
 
-#define SHORTOPTS "aAb" B_FLAG "c:C:d" D_FLAG "eE:fF:G:hHi:" I_FLAG j_FLAG J_FLAG "KlLm:M:nNOpq" Q_FLAG "r:s:StT:u" U_FLAG "vV:w:W:xXy:Yz:Z:#"
+#define SHORTOPTS "aAb" B_FLAG "c:C:d" D_FLAG "eE:fF:G:hHi:" I_FLAG j_FLAG J_FLAG "KlLm:M:nNOpPq" Q_FLAG "r:s:StT:u" U_FLAG "vV:w:W:xXy:Yz:Z:#"
 
 /*
  * Long options.
@@ -724,6 +727,7 @@ main(int argc, char **argv)
 	int cansandbox;
 #endif	/* HAVE_CAPSICUM */
 	int Bflag = 0;			/* buffer size */
+	int Pflag = 0;			/* persistent ring */
 	int jflag = -1;			/* packet time stamp source */
 	int Oflag = 1;			/* run filter code optimizer */
 	int pflag = 0;			/* don't go promiscuous */
@@ -804,6 +808,10 @@ main(int argc, char **argv)
 			Cflag = atoi(optarg) * 1000000;
 			if (Cflag < 0)
 				error("invalid file size %s", optarg);
+			break;
+
+		case 'P':
+			Pflag++;
 			break;
 
 		case 'd':
@@ -1576,13 +1584,31 @@ main(int argc, char **argv)
 		if (dumpinfo.CurrentFileName == NULL)
 			error("malloc of dumpinfo.CurrentFileName");
 
-		/* We do not need numbering for dumpfiles if Cflag isn't set. */
-		if (Cflag != 0)
-		  MakeFilename(dumpinfo.CurrentFileName, WFileName, 0, WflagChars);
-		else
-		  MakeFilename(dumpinfo.CurrentFileName, WFileName, 0, 0);
+		if( Cflag && Pflag)
+		{
+			int idx= get_last_file( WFileName);
 
-		p = pcap_dump_open(pd, dumpinfo.CurrentFileName);
+			if( idx != -1)
+			{
+			  	MakeFilename(dumpinfo.CurrentFileName, WFileName, idx, WflagChars);
+
+				printf("persisting %s\n", dumpinfo.CurrentFileName);
+
+				p = pcap_dump_open_append(pd, dumpinfo.CurrentFileName);
+			}
+			else
+			{
+			  	MakeFilename(dumpinfo.CurrentFileName, WFileName, 0, WflagChars);
+
+				p = pcap_dump_open(pd, dumpinfo.CurrentFileName);
+			}
+		}
+		else
+		{
+		  	MakeFilename(dumpinfo.CurrentFileName, WFileName, 0, 0);
+
+			p = pcap_dump_open(pd, dumpinfo.CurrentFileName);
+		}
 #ifdef HAVE_LIBCAP_NG
 		/* Give up CAP_DAC_OVERRIDE capability.
 		 * Only allow it to be restored if the -C or -G flag have been
@@ -1824,6 +1850,69 @@ cleanup(int signo _U_)
 	}
 	exit(0);
 #endif
+}
+
+static int get_last_file( const char *file)
+{
+  	DIR           *d;
+  	struct dirent *dir;
+  	char *slash;
+
+  	char path[PATH_MAX];
+  	char stat_path[PATH_MAX];
+  	char stem[PATH_MAX];
+
+	int index;
+	int status;
+  	char name[PATH_MAX];
+
+  	int newest_time= 0;
+  	int newest_index= -1;
+
+	struct stat buffer;
+
+	strcpy( path, file);
+
+  	slash= strrchr( path, '/');
+
+  	if( slash)
+  	{
+  		*slash= '\0';
+
+		strcpy( stem, slash+1);
+
+	  	d = opendir( path);
+
+	  	if (d)
+	  	{
+	    	while ((dir = readdir(d)) != NULL)
+	    	{
+	      		if( strncmp( dir->d_name, stem, strlen(stem)) == 0)
+	      		{
+	      			if( strlen(dir->d_name) > strlen(stem))
+	      			{
+		      			index= atoi( dir->d_name+strlen(stem));
+
+		      			sprintf( stat_path, "%s/%s%d", path, stem, index);
+
+		      			status= stat( stat_path, &buffer);
+
+		      			if( buffer.st_mtime > newest_time)
+		      			{
+		      				newest_time= buffer.st_mtime;
+		      				newest_index= index;
+
+		      				// printf("newest %s %s %d\n", stat_path, stem, index);
+		      			}
+	      			}
+	      		}
+	    	}
+
+	    	closedir(d);
+	  	}
+  	}
+
+	return newest_index;
 }
 
 /*
