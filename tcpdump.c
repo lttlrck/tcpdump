@@ -90,6 +90,7 @@ The Regents of the University of California.  All rights reserved.\n";
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <pwd.h>
 #include <grp.h>
 #include <dirent.h>
@@ -1732,25 +1733,30 @@ main(int argc, char **argv)
 
 	int ufd;
 
-	if ((ufd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+	mode_t mask= umask(0);
+	mkdir("/tmp/tcpdump.socks", 0777);
+
+    char * fn = "/tmp/tcpdump.socks/user.sock";
+    unlink( fn);
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strcpy(addr.sun_path, fn);
+
+	if ((ufd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0) {
 		perror("cannot create socket");
+		umask(mask);
 		return -1;
 	}
 
-	struct sockaddr_in laddr;
-
-	memset((char *)&laddr, 0, sizeof(laddr));
-	laddr.sin_family = AF_INET;
-	laddr.sin_addr.s_addr = htonl(0x7f00000a);
-	laddr.sin_port = htons(1974);
-
-	if (bind(ufd, (struct sockaddr *)&laddr, sizeof(laddr)) < 0) {
+	if (bind(ufd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		perror("bind failed");
 		return 0;
 	}
 
-	int dl= pcap_datalink( pd);
+	umask(mask);
 
+	int dl= pcap_datalink( pd);
 
 	pcap_setnonblock(pd, 1, ebuf);
 
