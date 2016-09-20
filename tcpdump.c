@@ -1730,8 +1730,117 @@ main(int argc, char **argv)
 		error("unable to enter the capability mode");
 #endif	/* HAVE_CAPSICUM */
 
+	int ufd;
+
+	if ((ufd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+		perror("cannot create socket");
+		return -1;
+	}
+
+	struct sockaddr_in laddr;
+
+	memset((char *)&laddr, 0, sizeof(laddr));
+	laddr.sin_family = AF_INET;
+	laddr.sin_addr.s_addr = htonl(0x7f00000a);
+	laddr.sin_port = htons(1974);
+
+	if (bind(ufd, (struct sockaddr *)&laddr, sizeof(laddr)) < 0) {
+		perror("bind failed");
+		return 0;
+	}
+
+	int dl= pcap_datalink( pd);
+
+
+	pcap_setnonblock(pd, 1, ebuf);
+
+	fd_set readfds;
+
+	int fd= pcap_get_selectable_fd(pd);
+	struct timeval tv;
+
 	do {
-		status = pcap_loop(pd, cnt, callback, pcap_userdata);
+
+		int scnt= 0;
+
+		while( 1) {
+
+			FD_ZERO(&readfds);
+			FD_SET(fd, &readfds);
+			FD_SET(ufd, &readfds);
+
+			int rv = select( ufd+1, &readfds, NULL, NULL, NULL);
+
+			if( rv < 0) {
+
+				return -1;
+			}
+			else if( rv > 0) {
+
+				if (FD_ISSET(fd,&readfds)) {
+
+					struct pcap_pkthdr *header;
+					const u_char *pkt_data;
+
+					int rp = pcap_next_ex( pd, &header, &pkt_data);
+
+					callback( pcap_userdata, header, pkt_data);
+				}
+
+				if (FD_ISSET(ufd,&readfds)) {
+
+					struct pcap_pkthdr header;
+					static u_char buffer[2048];
+
+					struct sockaddr src_addr;
+					socklen_t src_len;
+					int rf= 0;
+
+					// 1= ether 113=cooked
+
+					int off= 0;
+
+					if( dl == 1) {
+
+						memset( buffer, 0, 12);
+						buffer[12]= 0x8;
+						buffer[13]= 0x8; // custom ethertype 0x0808
+
+						off= 14;
+					}
+					else if( dl == 113) {
+
+						memset( buffer, 0, 14);
+						buffer[1]= 0x4;
+						buffer[3]= 0x1;
+						buffer[5]= 0x6;
+						buffer[14]= 0x8;
+						buffer[15]= 0x8; // custom ethertype 0x0808
+
+						off= 16;
+					}
+
+					rf= recvfrom( ufd, buffer+off, 2048-off, 0, &src_addr, &src_len);
+
+					header.len= rf+off;
+					header.caplen= rf+off;
+
+					gettimeofday(&header.ts, NULL);
+
+					callback( pcap_userdata, &header, buffer);
+				}
+
+				scnt++;
+
+				if( scnt == cnt) {
+
+					break;
+				}
+			}
+		}
+
+		//status = pcap_loop(pd, cnt, callback, pcap_userdata);
+
 		if (WFileName == NULL) {
 			/*
 			 * We're printing packets.  Flush the printed output,
