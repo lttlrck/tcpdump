@@ -169,6 +169,8 @@ static void dump_packet(u_char *, const struct pcap_pkthdr *, const u_char *);
 static void droproot(const char *, const char *);
 static int get_last_file(const char *);
 
+#define kSOCK_PATH "/tmp/tcpdump.socks/user.sock"
+
 #ifdef SIGNAL_REQ_INFO
 RETSIGTYPE requestinfo(int);
 #endif
@@ -1736,7 +1738,7 @@ main(int argc, char **argv)
 	mode_t mask= umask(0);
 	mkdir("/tmp/tcpdump.socks", 0777);
 
-    char * fn = "/tmp/tcpdump.socks/user.sock";
+    char * fn = kSOCK_PATH;
     unlink( fn);
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
@@ -1930,6 +1932,8 @@ main(int argc, char **argv)
 static RETSIGTYPE
 cleanup(int signo _U_)
 {
+    unlink( kSOCK_PATH);
+
 #ifdef USE_WIN32_MM_TIMER
 	if (timer_id)
 		timeKillEvent(timer_id);
