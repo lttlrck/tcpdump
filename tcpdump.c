@@ -198,6 +198,7 @@ static const struct tok status_flags[] = {
 };
 
 static pcap_t *pd;
+static int ufd;
 
 static int supports_monitor_mode;
 
@@ -1733,8 +1734,6 @@ main(int argc, char **argv)
 		error("unable to enter the capability mode");
 #endif	/* HAVE_CAPSICUM */
 
-	int ufd;
-
 	mode_t mask= umask(0);
 	mkdir("/tmp/tcpdump.socks", 0777);
 
@@ -1777,7 +1776,10 @@ main(int argc, char **argv)
 			FD_SET(fd, &readfds);
 			FD_SET(ufd, &readfds);
 
-			int rv = select( ufd+1, &readfds, NULL, NULL, NULL);
+			tv.tv_sec  = 0;
+			tv.tv_usec = 10000;
+
+			int rv = select( ufd+1, &readfds, NULL, NULL, &tv);
 
 			if( rv < 0) {
 
@@ -1792,7 +1794,10 @@ main(int argc, char **argv)
 
 					int rp = pcap_next_ex( pd, &header, &pkt_data);
 
-					callback( pcap_userdata, header, pkt_data);
+					if( rp) {
+
+						callback( pcap_userdata, header, pkt_data);
+					}
 				}
 
 				if (FD_ISSET(ufd,&readfds)) {
@@ -1830,12 +1835,15 @@ main(int argc, char **argv)
 
 					rf= recvfrom( ufd, buffer+off, 2048-off, 0, &src_addr, &src_len);
 
-					header.len= rf+off;
-					header.caplen= rf+off;
+					if( rf) {
 
-					gettimeofday(&header.ts, NULL);
+						header.len= rf+off;
+						header.caplen= rf+off;
 
-					callback( pcap_userdata, &header, buffer);
+						gettimeofday(&header.ts, NULL);
+
+						callback( pcap_userdata, &header, buffer);
+					}
 				}
 
 				scnt++;
@@ -1932,6 +1940,7 @@ main(int argc, char **argv)
 static RETSIGTYPE
 cleanup(int signo _U_)
 {
+	close(ufd);
     unlink( kSOCK_PATH);
 
 #ifdef USE_WIN32_MM_TIMER
